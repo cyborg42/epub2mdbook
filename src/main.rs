@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use epub2mdbook::convert_epub_to_mdbook;
+use epub2mdbook::{convert_epub_to_mdbook, error::Error};
 
 #[derive(Parser)]
 struct Args {
@@ -13,7 +13,7 @@ struct Args {
     output_dir: Option<PathBuf>,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Error> {
     let args = Args::parse();
     convert_epub_to_mdbook(args.input_epub, args.output_dir)?;
     println!("Conversion completed successfully!");

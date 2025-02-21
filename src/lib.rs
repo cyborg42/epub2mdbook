@@ -1,18 +1,28 @@
+pub mod error;
+
 use epub::doc::{EpubDoc, NavPoint};
-use html2md::parse_html;
+use error::Error;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+use std::{fs, io};
 
+/// Convert an EPUB file to an MDBook
+///
+/// # Arguments
+///
+/// * `epub_path` - The path to the EPUB file
+/// * `output_dir` - The path to the output directory
+///
 pub fn convert_epub_to_mdbook(
     epub_path: impl AsRef<Path>,
     output_dir: Option<impl AsRef<Path>>,
-) -> anyhow::Result<()> {
+) -> Result<(), Error> {
     let epub_path = epub_path.as_ref();
     if !epub_path.is_file() {
-        return Err(anyhow::anyhow!("{} is not a file", epub_path.display()));
+        return Err(Error::NotAFile(epub_path.display().to_string()));
     }
     let book_name = epub_path.with_extension("");
     let book_name = book_name.file_name().unwrap().to_string_lossy().to_string();
@@ -31,7 +41,7 @@ pub fn convert_epub_to_mdbook(
     };
     let creator = doc.metadata.get("creator").and_then(|v| v.first().cloned());
 
-    let (toc, html_to_md) = toc_to_md(&doc, &title)?;
+    let (toc, html_to_md) = toc_to_md(&doc, &title);
     fs::write(output_dir.join("src/SUMMARY.md"), toc)?;
 
     extract_chapters_and_resources(&mut doc, &output_dir, &html_to_md)?;
@@ -39,12 +49,12 @@ pub fn convert_epub_to_mdbook(
     Ok(())
 }
 
-pub fn nav_point_to_md(
+fn nav_to_md(
     nav: &NavPoint,
     indent: usize,
-    html_files: &HashMap<PathBuf, PathBuf>,
+    html_to_md: &HashMap<PathBuf, PathBuf>,
 ) -> Option<String> {
-    let file = html_files.get(&nav.content)?;
+    let file = html_to_md.get(&nav.content)?;
     let mut md = format!(
         "{}- [{}]({})\n",
         "  ".repeat(indent),
@@ -52,20 +62,31 @@ pub fn nav_point_to_md(
         file.to_string_lossy()
     );
     for child in &nav.children {
-        if let Some(child_md) = nav_point_to_md(child, indent + 1, html_files) {
+        if let Some(child_md) = nav_to_md(child, indent + 1, html_to_md) {
             md.push_str(&child_md);
         }
     }
     Some(md)
 }
 
+/// Convert the table of contents to SUMMARY.md
+///
+/// # Arguments
+///
+/// * `doc` - The EPUB document
+/// * `title` - The title of the book
+///
+/// # Returns
+///
+/// * `summary_md` - The SUMMARY.md content
+/// * `html_to_md` - The file mapping from html to md
 pub fn toc_to_md<R: Read + Seek>(
     doc: &EpubDoc<R>,
     title: &str,
-) -> anyhow::Result<(String, HashMap<PathBuf, PathBuf>)> {
+) -> (String, HashMap<PathBuf, PathBuf>) {
     let toc = doc.toc.clone();
 
-    let mut markdown = format!("# {}\n\n", title);
+    let mut summary_md = format!("# {}\n\n", title);
     let html_to_md = doc
         .resources
         .iter()
@@ -73,48 +94,57 @@ pub fn toc_to_md<R: Read + Seek>(
         .map(|(_, (path, _))| (path.clone(), path.with_extension("md")))
         .collect::<HashMap<PathBuf, PathBuf>>();
     for nav in toc {
-        if let Some(md) = nav_point_to_md(&nav, 0, &html_to_md) {
-            markdown.push_str(&md);
+        if let Some(md) = nav_to_md(&nav, 0, &html_to_md) {
+            summary_md.push_str(&md);
         }
     }
-    Ok((markdown, html_to_md))
+    (summary_md, html_to_md)
 }
 
-pub fn extract_chapters_and_resources<R: Read + Seek>(
+/// Capture the `{link}` without `#`, eg:
+/// ```
+/// [ABC]({abc.html}#xxx)
+/// [ABC]({abc.html})
+/// ```
+static LINK_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\[[^\]]+\]\(([^#)]+)(?:#[^)]+)?\)"#).unwrap());
+
+fn extract_chapters_and_resources<R: Read + Seek>(
     doc: &mut EpubDoc<R>,
     output_dir: impl AsRef<Path>,
     html_to_md: &HashMap<PathBuf, PathBuf>,
-) -> anyhow::Result<()> {
+) -> Result<(), Error> {
     let output_dir = output_dir.as_ref();
     let src_dir = output_dir.join("src");
-    let re = Regex::new(r#"\[[^\]]+\]\(([^)]+)\)"#).unwrap(); // [abc](abc.html)
     for (_, (path, _)) in doc.resources.clone().into_iter() {
         let content = match doc.get_resource_by_path(&path) {
             Some(content) => content,
-            None => continue,
+            None => continue, // unreachable
         };
-
         if let Some(path) = html_to_md.get(&path) {
+            // html file, convert to md
             let target_path = src_dir.join(path);
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent)?;
             }
             let html = String::from_utf8(content)?;
-            let markdown = parse_html(&html);
-            let markdown = re
-                .replace_all(&markdown, |caps: &Captures| {
-                    let link = caps[1].to_string();
-                    let ori = caps[0].to_string();
-                    if let Some(md_path) = html_to_md.get(&PathBuf::from(&link)) {
+            let markdown = LINK_REGEX
+                .replace_all(&html2md::parse_html(&html), |caps: &Captures| {
+                    // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
+                    let origin = &caps[0];
+                    let link = &caps[1];
+                    if let Some(md_path) = html_to_md.get(&PathBuf::from(link)) {
                         let md_path = md_path.to_string_lossy().to_string();
-                        ori.replace(&link, &md_path)
+                        origin.replace(link, &md_path)
                     } else {
-                        ori
+                        origin.to_string()
                     }
                 })
-                .to_string();
+                .replace(r"![]()", "")
+                .replace(r"[]()", "");
             fs::write(target_path, markdown)?;
         } else {
+            // other file, just copy
             let target_path = src_dir.join(&path);
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent)?;
@@ -125,11 +155,11 @@ pub fn extract_chapters_and_resources<R: Read + Seek>(
     Ok(())
 }
 
-pub fn write_book_toml(
+fn write_book_toml(
     output_dir: impl AsRef<Path>,
     title: &str,
     creator: Option<String>,
-) -> anyhow::Result<()> {
+) -> io::Result<()> {
     let output_dir = output_dir.as_ref();
     let creator = match creator {
         Some(creator) => format!("author = \"{creator}\"\n"),
@@ -145,12 +175,11 @@ mod tests {
     use super::*;
     #[test]
     fn test_replace_links() {
-        let markdown = r"[hello](hello.html)";
-        let re = Regex::new(r#"\[[^\]]+\]\(([^)]+)\)"#).unwrap();
-        let markdown = re.replace_all(&markdown, |caps: &Captures| {
+        let markdown = r"[hello](hello.html#xxx) [hi](hi.xhtml)";
+        let markdown = LINK_REGEX.replace_all(&markdown, |caps: &Captures| {
             let link = caps[1].to_string();
             caps[0].replace(&link, "hello.md")
         });
-        assert_eq!(markdown, "[hello](hello.md)");
+        assert_eq!(markdown, "[hello](hello.md#xxx) [hi](hello.md)");
     }
 }

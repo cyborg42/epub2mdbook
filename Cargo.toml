@@ -2,10 +2,16 @@
 name = "epub2mdbook"
 version = "0.1.0"
 edition = "2021"
+description = "A tool to convert EPUB files to MDBook format"
+authors = ["Maverick Liu <maverickliu@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/cyborg42/epub2mdbook"
+keywords = ["epub", "mdbook", "converter", "ebook"]
+categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
-anyhow = "1.0.96"
 clap = { version = "4.5.30", features = ["derive"] }
 epub = "2.1.1"
 html2md = "0.2.15"
 regex = "1.11.1"
+thiserror = "2.0.11"
