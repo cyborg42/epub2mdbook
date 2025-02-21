@@ -226,6 +226,7 @@ dependencies = [
  "clap",
  "epub",
  "html2md",
+ "regex",
 ]
 
 [[package]]

@@ -8,3 +8,4 @@ anyhow = "1.0.96"
 clap = { version = "4.5.30", features = ["derive"] }
 epub = "2.1.1"
 html2md = "0.2.15"
+regex = "1.11.1"
