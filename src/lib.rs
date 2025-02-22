@@ -4,6 +4,7 @@ use epub::doc::{EpubDoc, NavPoint};
 use error::Error;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -14,7 +15,7 @@ use std::{fs, io};
 /// # Arguments
 ///
 /// * `epub_path` - The path to the EPUB file
-/// * `output_dir` - The path to the output directory
+/// * `output_dir` - The path to the output directory, pwd by default
 ///
 pub fn convert_epub_to_mdbook(
     epub_path: impl AsRef<Path>,
@@ -37,11 +38,11 @@ pub fn convert_epub_to_mdbook(
     fs::create_dir_all(output_dir.join("src"))?;
 
     let mut doc = EpubDoc::new(epub_path)?;
-    let title = if let Some(title) = doc.metadata.get("title") {
-        title.first().cloned().unwrap_or(book_name)
-    } else {
-        book_name
-    };
+    let title = doc
+        .metadata
+        .get("title")
+        .and_then(|v| v.first().cloned())
+        .unwrap_or(book_name);
     let creator = doc.metadata.get("creator").and_then(|v| v.first().cloned());
     let (toc, html_to_md) = toc_to_md(&doc, &title);
     extract_chapters_and_resources(&mut doc, &output_dir, &html_to_md)?;
@@ -107,6 +108,10 @@ fn extract_chapters_and_resources<R: Read + Seek>(
     output_dir: impl AsRef<Path>,
     html_to_md: &HashMap<PathBuf, PathBuf>,
 ) -> Result<(), Error> {
+    let file_name_map = html_to_md
+        .iter()
+        .filter_map(|(k, v)| Some((k.file_name()?, v.file_name()?)))
+        .collect::<HashMap<_, _>>();
     let output_dir = output_dir.as_ref();
     let src_dir = output_dir.join("src");
     for (_, (path, _)) in doc.resources.clone().into_iter() {
@@ -116,13 +121,17 @@ fn extract_chapters_and_resources<R: Read + Seek>(
         };
         if let Some(md_path) = html_to_md.get(&path) {
             // html file, convert to md
-            let target_path = src_dir.join(md_path);
+            let target_path = if md_path == Path::new("SUMMARY.md") {
+                src_dir.join("_SUMMARY.md")
+            } else {
+                src_dir.join(md_path)
+            };
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent)?;
             }
             let html = String::from_utf8(content)?;
             let markdown = html2md::parse_html(&html);
-            let markdown = post_process_md(&markdown, html_to_md);
+            let markdown = post_process_md(&markdown, &file_name_map);
             fs::write(target_path, markdown)?;
         } else {
             // other file, just copy
@@ -147,12 +156,7 @@ static EMPTY_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\[([^\]]+)\]\(\)"#).expect("unreachable"));
 static URL_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9+.-]*:").expect("unreachable"));
-fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> String {
-    let file_name_map = html_to_md
-        .iter()
-        .filter_map(|(k, v)| Some((k.file_name()?, v.file_name()?)))
-        .collect::<HashMap<_, _>>();
-
+fn post_process_md(markdown: &str, file_name_map: &HashMap<&OsStr, &OsStr>) -> String {
     let markdown = LINK
         .replace_all(markdown, |caps: &Captures| {
             // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
@@ -162,14 +166,14 @@ fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> St
             if URL_LINK.is_match(link) {
                 return origin.to_string();
             }
-            let link = match Path::new(&link).file_name() {
+            let html_file_name = match Path::new(&link).file_name() {
                 Some(link) => link,
                 None => return origin.to_string(),
             };
-            if let Some(md_path) = file_name_map.get(link) {
+            if let Some(md_file_name) = file_name_map.get(html_file_name) {
                 origin.replace(
-                    &link.to_string_lossy().to_string(),
-                    &md_path.to_string_lossy(),
+                    &html_file_name.to_string_lossy().to_string(),
+                    &md_file_name.to_string_lossy(),
                 )
             } else {
                 origin.to_string()

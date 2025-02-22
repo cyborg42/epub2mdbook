@@ -8,7 +8,7 @@ struct Args {
     /// The path to the input EPUB file
     #[clap(short, long)]
     input_epub: PathBuf,
-    /// The path to the output directory
+    /// The path to the output directory, pwd by default
     #[clap(short, long)]
     output_dir: Option<PathBuf>,
 }
