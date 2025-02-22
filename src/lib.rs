@@ -25,7 +25,11 @@ pub fn convert_epub_to_mdbook(
         return Err(Error::NotAFile(epub_path.display().to_string()));
     }
     let book_name = epub_path.with_extension("");
-    let book_name = book_name.file_name().unwrap().to_string_lossy().to_string();
+    let book_name = book_name
+        .file_name()
+        .expect("unreachable")
+        .to_string_lossy()
+        .to_string();
     let output_dir = match output_dir {
         Some(output_dir) => output_dir.as_ref().join(&book_name),
         None => PathBuf::from(".").join(&book_name),
@@ -101,14 +105,6 @@ pub fn toc_to_md<R: Read + Seek>(
     (summary_md, html_to_md)
 }
 
-/// Capture the `{link}` without `#`, eg:
-/// ```
-/// [ABC]({abc.html}#xxx)
-/// [ABC]({abc.html})
-/// ```
-static LINK_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\[[^\]]+\]\(([^#)]+)(?:#[^)]+)?\)"#).unwrap());
-
 fn extract_chapters_and_resources<R: Read + Seek>(
     doc: &mut EpubDoc<R>,
     output_dir: impl AsRef<Path>,
@@ -121,27 +117,15 @@ fn extract_chapters_and_resources<R: Read + Seek>(
             Some(content) => content,
             None => continue, // unreachable
         };
-        if let Some(path) = html_to_md.get(&path) {
+        if let Some(md_path) = html_to_md.get(&path) {
             // html file, convert to md
-            let target_path = src_dir.join(path);
+            let target_path = src_dir.join(md_path);
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let html = String::from_utf8(content)?;
-            let markdown = LINK_REGEX
-                .replace_all(&html2md::parse_html(&html), |caps: &Captures| {
-                    // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
-                    let origin = &caps[0];
-                    let link = &caps[1];
-                    if let Some(md_path) = html_to_md.get(&PathBuf::from(link)) {
-                        let md_path = md_path.to_string_lossy().to_string();
-                        origin.replace(link, &md_path)
-                    } else {
-                        origin.to_string()
-                    }
-                })
-                .replace(r"![]()", "")
-                .replace(r"[]()", "");
+            let html = String::from_utf8(content.clone())?;
+            let markdown = html2md::parse_html(&html);
+            let markdown = post_process_md(&markdown, html_to_md);
             fs::write(target_path, markdown)?;
         } else {
             // other file, just copy
@@ -153,6 +137,52 @@ fn extract_chapters_and_resources<R: Read + Seek>(
         }
     }
     Ok(())
+}
+
+/// Capture the `{link}` without `#`, eg:
+/// ```
+/// [ABC]({abc.html}#xxx)
+/// [ABC]({abc.html})
+/// ```
+static LINK_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\[[^\]]+\]\(([^#)]+)(?:#[^)]+)?\)"#).expect("unreachable"));
+
+/// Capture the empty links, eg:
+/// ```
+/// [{ABC}]()
+/// ```
+static LINK_NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\[([^\]]+)\]\(\)"#).expect("unreachable"));
+
+fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> String {
+    let file_name_map = html_to_md
+        .iter()
+        .filter_map(|(k, v)| Some((k.file_name()?, v.file_name()?)))
+        .collect::<HashMap<_, _>>();
+
+    let markdown = LINK_REGEX
+        .replace_all(markdown, |caps: &Captures| {
+            // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
+            let origin = &caps[0];
+            let link = match Path::new(&caps[1]).file_name() {
+                Some(link) => link,
+                None => return origin.to_string(),
+            };
+            if let Some(md_path) = file_name_map.get(link) {
+                origin.replace(
+                    &link.to_string_lossy().to_string(),
+                    &md_path.to_string_lossy(),
+                )
+            } else {
+                origin.to_string()
+            }
+        })
+        .replace(r"![]()", "")
+        .replace(r"[]()", "");
+
+    LINK_NAME_REGEX
+        .replace_all(&markdown, |caps: &Captures| caps[1].to_string())
+        .to_string()
 }
 
 fn write_book_toml(
