@@ -182,9 +182,7 @@ fn post_process_md(markdown: &str, file_name_map: &HashMap<&OsStr, &OsStr>) -> S
         .replace(r"![]()", "")
         .replace(r"[]()", "");
 
-    EMPTY_LINK
-        .replace_all(&markdown, |caps: &Captures| caps[1].to_string())
-        .to_string()
+    EMPTY_LINK.replace_all(&markdown, "$1").to_string()
 }
 
 fn write_book_toml(
