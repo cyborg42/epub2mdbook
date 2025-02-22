@@ -151,7 +151,7 @@ static LINK_REGEX: LazyLock<Regex> =
 /// ```
 /// [{ABC}]()
 /// ```
-static LINK_NAME_REGEX: LazyLock<Regex> =
+static EMPTY_LINK_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\[([^\]]+)\]\(\)"#).expect("unreachable"));
 
 fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> String {
@@ -164,7 +164,11 @@ fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> St
         .replace_all(markdown, |caps: &Captures| {
             // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
             let origin = &caps[0];
-            let link = match Path::new(&caps[1]).file_name() {
+            let link = &caps[1];
+            if url::Url::parse(link).is_ok() {
+                return origin.to_string();
+            }
+            let link = match Path::new(&link).file_name() {
                 Some(link) => link,
                 None => return origin.to_string(),
             };
@@ -180,7 +184,7 @@ fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> St
         .replace(r"![]()", "")
         .replace(r"[]()", "");
 
-    LINK_NAME_REGEX
+    EMPTY_LINK_REGEX
         .replace_all(&markdown, |caps: &Captures| caps[1].to_string())
         .to_string()
 }
