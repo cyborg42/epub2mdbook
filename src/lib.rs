@@ -34,7 +34,6 @@ pub fn convert_epub_to_mdbook(
         Some(output_dir) => output_dir.as_ref().join(&book_name),
         None => PathBuf::from(".").join(&book_name),
     };
-
     fs::create_dir_all(output_dir.join("src"))?;
 
     let mut doc = EpubDoc::new(epub_path)?;
@@ -44,11 +43,9 @@ pub fn convert_epub_to_mdbook(
         book_name
     };
     let creator = doc.metadata.get("creator").and_then(|v| v.first().cloned());
-
     let (toc, html_to_md) = toc_to_md(&doc, &title);
-    fs::write(output_dir.join("src/SUMMARY.md"), toc)?;
-
     extract_chapters_and_resources(&mut doc, &output_dir, &html_to_md)?;
+    fs::write(output_dir.join("src/SUMMARY.md"), toc)?;
     write_book_toml(&output_dir, &title, creator)?;
     Ok(())
 }
