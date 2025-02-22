@@ -123,7 +123,7 @@ fn extract_chapters_and_resources<R: Read + Seek>(
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let html = String::from_utf8(content.clone())?;
+            let html = String::from_utf8(content)?;
             let markdown = html2md::parse_html(&html);
             let markdown = post_process_md(&markdown, html_to_md);
             fs::write(target_path, markdown)?;
@@ -144,28 +144,25 @@ fn extract_chapters_and_resources<R: Read + Seek>(
 /// [ABC]({abc.html}#xxx)
 /// [ABC]({abc.html})
 /// ```
-static LINK_REGEX: LazyLock<Regex> =
+static LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\[[^\]]+\]\(([^#)]+)(?:#[^)]+)?\)"#).expect("unreachable"));
-
-/// Capture the empty links, eg:
-/// ```
-/// [{ABC}]()
-/// ```
-static EMPTY_LINK_REGEX: LazyLock<Regex> =
+static EMPTY_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\[([^\]]+)\]\(\)"#).expect("unreachable"));
-
+static URL_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9+.-]*:").expect("unreachable"));
 fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> String {
     let file_name_map = html_to_md
         .iter()
         .filter_map(|(k, v)| Some((k.file_name()?, v.file_name()?)))
         .collect::<HashMap<_, _>>();
 
-    let markdown = LINK_REGEX
+    let markdown = LINK
         .replace_all(markdown, |caps: &Captures| {
             // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
             let origin = &caps[0];
             let link = &caps[1];
-            if url::Url::parse(link).is_ok() {
+            // Don't modify links with schemes like `https`.
+            if URL_LINK.is_match(link) {
                 return origin.to_string();
             }
             let link = match Path::new(&link).file_name() {
@@ -184,7 +181,7 @@ fn post_process_md(markdown: &str, html_to_md: &HashMap<PathBuf, PathBuf>) -> St
         .replace(r"![]()", "")
         .replace(r"[]()", "");
 
-    EMPTY_LINK_REGEX
+    EMPTY_LINK
         .replace_all(&markdown, |caps: &Captures| caps[1].to_string())
         .to_string()
 }
@@ -210,7 +207,7 @@ mod tests {
     #[test]
     fn test_replace_links() {
         let markdown = r"[hello](hello.html#xxx) [hi](hi.xhtml)";
-        let markdown = LINK_REGEX.replace_all(&markdown, |caps: &Captures| {
+        let markdown = LINK.replace_all(&markdown, |caps: &Captures| {
             let link = caps[1].to_string();
             caps[0].replace(&link, "hello.md")
         });
