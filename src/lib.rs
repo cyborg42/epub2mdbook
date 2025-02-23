@@ -115,32 +115,29 @@ fn extract_chapters_and_resources<R: Read + Seek>(
     let output_dir = output_dir.as_ref();
     let src_dir = output_dir.join("src");
     for (_, (path, _)) in doc.resources.clone().into_iter() {
-        let content = match doc.get_resource_by_path(&path) {
+        let mut content = match doc.get_resource_by_path(&path) {
             Some(content) => content,
             None => continue, // unreachable
         };
-        if let Some(md_path) = html_to_md.get(&path) {
+        let target_path = if let Some(md_path) = html_to_md.get(&path) {
             // html file, convert to md
-            let target_path = if md_path == Path::new("SUMMARY.md") {
+            let html = String::from_utf8(content.clone())?;
+            let markdown = htmd::convert(&html)?;
+            content = post_process_md(&markdown, &file_name_map).into_bytes();
+            if md_path == Path::new("SUMMARY.md") {
                 src_dir.join("_SUMMARY.md")
             } else {
                 src_dir.join(md_path)
-            };
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent)?;
             }
-            let html = String::from_utf8(content)?;
-            let markdown = html2md::parse_html(&html);
-            let markdown = post_process_md(&markdown, &file_name_map);
-            fs::write(target_path, markdown)?;
         } else {
             // other file, just copy
-            let target_path = src_dir.join(&path);
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(target_path, content)?;
+            src_dir.join(&path)
+        };
+        // write to target path
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)?;
         }
+        fs::write(target_path, content)?;
     }
     Ok(())
 }
@@ -150,39 +147,39 @@ fn extract_chapters_and_resources<R: Read + Seek>(
 /// [ABC]({abc.html}#xxx)
 /// [ABC]({abc.html})
 /// ```
-static LINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\[[^\]]+\]\(([^#)]+)(?:#[^)]+)?\)"#).expect("unreachable"));
-static EMPTY_LINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\[([^\]]+)\]\(\)"#).expect("unreachable"));
+static LINK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\[[^\]]+\]\(?P<link>([^#)]+)(?:#[^)]+)?\)"#).expect("unreachable")
+});
+/// Match the URL link, eg:
+/// ```
+/// https://www.example.com\
+/// ```
 static URL_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9+.-]*:").expect("unreachable"));
-fn post_process_md(markdown: &str, file_name_map: &HashMap<&OsStr, &OsStr>) -> String {
-    let markdown = LINK
-        .replace_all(markdown, |caps: &Captures| {
-            // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
-            let origin = &caps[0];
-            let link = &caps[1];
-            // Don't modify links with schemes like `https`.
-            if URL_LINK.is_match(link) {
-                return origin.to_string();
-            }
-            let html_file_name = match Path::new(&link).file_name() {
-                Some(link) => link,
-                None => return origin.to_string(),
-            };
-            if let Some(md_file_name) = file_name_map.get(html_file_name) {
-                origin.replace(
-                    &html_file_name.to_string_lossy().to_string(),
-                    &md_file_name.to_string_lossy(),
-                )
-            } else {
-                origin.to_string()
-            }
-        })
-        .replace(r"![]()", "")
-        .replace(r"[]()", "");
 
-    EMPTY_LINK.replace_all(&markdown, "$1").to_string()
+fn post_process_md(markdown: &str, file_name_map: &HashMap<&OsStr, &OsStr>) -> String {
+    LINK.replace_all(markdown, |caps: &Captures| {
+        // replace [ABC](abc.html#xxx) to [ABC](abc.md#xxx)
+        let origin = &caps[0];
+        let link = &caps["link"];
+        // Don't modify links with schemes like `https`.
+        if URL_LINK.is_match(link) {
+            return origin.to_string();
+        }
+        let html_file_name = match Path::new(&link).file_name() {
+            Some(link) => link,
+            None => return origin.to_string(),
+        };
+        if let Some(md_file_name) = file_name_map.get(html_file_name) {
+            origin.replace(
+                &*html_file_name.to_string_lossy(),
+                &md_file_name.to_string_lossy(),
+            )
+        } else {
+            origin.to_string()
+        }
+    })
+    .to_string()
 }
 
 fn write_book_toml(
