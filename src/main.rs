@@ -6,9 +6,8 @@ use epub2mdbook::{convert_epub_to_mdbook, error::Error};
 #[derive(Parser)]
 struct Args {
     /// The path to the input EPUB file
-    #[clap(short, long)]
     input_epub: PathBuf,
-    /// The path to the output directory, working directory by default
+    /// The path to the output directory
     #[clap(short, long, default_value = ".")]
     output_dir: PathBuf,
 }
