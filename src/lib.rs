@@ -25,8 +25,8 @@ pub fn convert_epub_to_mdbook(
     if !epub_path.is_file() {
         return Err(Error::NotAFile(epub_path.display().to_string()));
     }
-    let book_name = epub_path.with_extension("");
-    let book_name = book_name
+    let book_name = epub_path
+        .with_extension("")
         .file_name()
         .expect("unreachable")
         .to_string_lossy()
@@ -78,7 +78,7 @@ fn epub_nav_to_md(
 ///
 /// # Arguments
 ///
-/// * `doc` - The EPUB document
+/// * `epub_doc` - The EPUB document
 /// * `title` - The title of the book
 ///
 /// # Returns
@@ -189,11 +189,11 @@ fn write_book_toml(
     creator: Option<String>,
 ) -> io::Result<()> {
     let output_dir = output_dir.as_ref();
-    let creator = match creator {
+    let author = match creator {
         Some(creator) => format!("author = \"{creator}\"\n"),
         None => "".to_string(),
     };
-    let toml_content = format!("[book]\ntitle = \"{title}\"\n{creator}",);
+    let toml_content = format!("[book]\ntitle = \"{title}\"\n{author}",);
     fs::write(output_dir.join("book.toml"), toml_content)?;
     Ok(())
 }
