@@ -8,7 +8,7 @@ This is a powerful tool to convert EPUB files to MDBook format.
 
 ```bash
 cargo install epub2mdbook
-epub2mdbook --input-epub path/to/input.epub --output-dir path/to/output
+epub2mdbook path/to/input.epub --output-dir path/to/output
 ```
 
 ### Rust
@@ -16,5 +16,5 @@ epub2mdbook --input-epub path/to/input.epub --output-dir path/to/output
 ```rust
 use epub2mdbook::convert_epub_to_mdbook;
 
-convert_epub_to_mdbook("path/to/input.epub", Some("path/to/output"), true);
+convert_epub_to_mdbook("path/to/input.epub", "path/to/output", true);
 ```

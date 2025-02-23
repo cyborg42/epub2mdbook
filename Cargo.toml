@@ -1,6 +1,6 @@
 [package]
 name = "epub2mdbook"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 description = "A tool to convert EPUB files to MDBook format"
 authors = ["Maverick Liu <maverick.liu42@gmail.com>"]
