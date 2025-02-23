@@ -15,15 +15,15 @@ use std::{fs, io};
 /// # Arguments
 ///
 /// * `epub_path` - The path to the EPUB file
-/// * `output_dir` - The path to the output directory, working directory by default
+/// * `output_dir` - The path to the output directory
 /// * `with_file_name` - Whether to use the file name as the output directory
-///
 pub fn convert_epub_to_mdbook(
     epub_path: impl AsRef<Path>,
-    output_dir: Option<impl AsRef<Path>>,
+    output_dir: impl AsRef<Path>,
     with_file_name: bool,
 ) -> Result<(), Error> {
     let epub_path = epub_path.as_ref();
+    let output_dir = output_dir.as_ref();
     if !epub_path.is_file() {
         return Err(Error::NotAFile(epub_path.display().to_string()));
     }
@@ -33,13 +33,11 @@ pub fn convert_epub_to_mdbook(
         .expect("unreachable")
         .to_string_lossy()
         .to_string();
-    let mut output_dir = match output_dir {
-        Some(output_dir) => output_dir.as_ref().to_owned(),
-        None => PathBuf::from("."),
+    let output_dir = if with_file_name {
+        output_dir.join(&book_name)
+    } else {
+        output_dir.to_owned()
     };
-    if with_file_name {
-        output_dir.push(&book_name);
-    }
     fs::create_dir_all(output_dir.join("src"))?;
 
     let mut epub_doc = EpubDoc::new(epub_path)?;
@@ -118,8 +116,7 @@ fn extract_chapters_and_resources<R: Read + Seek>(
         .iter()
         .filter_map(|(k, v)| Some((k.file_name()?, v.file_name()?)))
         .collect::<HashMap<_, _>>();
-    let output_dir = output_dir.as_ref();
-    let src_dir = output_dir.join("src");
+    let src_dir = output_dir.as_ref().join("src");
     for (_, (path, _)) in epub_doc.resources.clone().into_iter() {
         let mut content = match epub_doc.get_resource_by_path(&path) {
             Some(content) => content,

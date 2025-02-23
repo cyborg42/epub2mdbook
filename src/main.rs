@@ -9,8 +9,8 @@ struct Args {
     #[clap(short, long)]
     input_epub: PathBuf,
     /// The path to the output directory, working directory by default
-    #[clap(short, long)]
-    output_dir: Option<PathBuf>,
+    #[clap(short, long, default_value = ".")]
+    output_dir: PathBuf,
 }
 
 fn main() -> Result<(), Error> {
