@@ -16,5 +16,5 @@ epub2mdbook --input-epub path/to/input.epub --output-dir path/to/output
 ```rust
 use epub2mdbook::convert_epub_to_mdbook;
 
-convert_epub_to_mdbook("path/to/input.epub", Some("path/to/output"));
+convert_epub_to_mdbook("path/to/input.epub", Some("path/to/output"), true);
 ```

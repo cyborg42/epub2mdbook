@@ -16,10 +16,12 @@ use std::{fs, io};
 ///
 /// * `epub_path` - The path to the EPUB file
 /// * `output_dir` - The path to the output directory, working directory by default
+/// * `with_file_name` - Whether to use the file name as the output directory
 ///
 pub fn convert_epub_to_mdbook(
     epub_path: impl AsRef<Path>,
     output_dir: Option<impl AsRef<Path>>,
+    with_file_name: bool,
 ) -> Result<(), Error> {
     let epub_path = epub_path.as_ref();
     if !epub_path.is_file() {
@@ -31,10 +33,13 @@ pub fn convert_epub_to_mdbook(
         .expect("unreachable")
         .to_string_lossy()
         .to_string();
-    let output_dir = match output_dir {
-        Some(output_dir) => output_dir.as_ref().join(&book_name),
-        None => PathBuf::from(".").join(&book_name),
+    let mut output_dir = match output_dir {
+        Some(output_dir) => output_dir.as_ref().to_owned(),
+        None => PathBuf::from("."),
     };
+    if with_file_name {
+        output_dir.push(&book_name);
+    }
     fs::create_dir_all(output_dir.join("src"))?;
 
     let mut epub_doc = EpubDoc::new(epub_path)?;

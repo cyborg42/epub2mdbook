@@ -15,7 +15,7 @@ struct Args {
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
-    convert_epub_to_mdbook(args.input_epub, args.output_dir)?;
+    convert_epub_to_mdbook(args.input_epub, args.output_dir, true)?;
     println!("Conversion completed successfully!");
     Ok(())
 }
