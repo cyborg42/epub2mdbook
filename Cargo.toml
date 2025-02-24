@@ -1,6 +1,6 @@
 [package]
 name = "epub2mdbook"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 description = "A tool to convert EPUB files to MDBook format"
 authors = ["Maverick Liu <maverick.liu42@gmail.com>"]
@@ -13,5 +13,7 @@ categories = ["command-line-utilities", "text-processing"]
 clap = { version = "4.5.30", features = ["derive"] }
 epub = "2.1.1"
 htmd = "0.1.6"
+mdbook = "0.4.45"
 regex = "1.11.1"
 thiserror = "2.0.11"
+toml = "0.8.20"

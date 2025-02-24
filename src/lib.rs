@@ -2,6 +2,7 @@ pub mod error;
 
 use epub::doc::{EpubDoc, NavPoint};
 use error::Error;
+use mdbook::config::BookConfig;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::{fs, io};
 
-/// Convert an EPUB file to an MDBook
+/// Convert an EPUB file to MDBook format
 ///
 /// # Arguments
 ///
@@ -23,37 +24,26 @@ pub fn convert_epub_to_mdbook(
     with_file_name: bool,
 ) -> Result<(), Error> {
     let epub_path = epub_path.as_ref();
-    let output_dir = output_dir.as_ref();
     if !epub_path.is_file() {
         return Err(Error::NotAFile(epub_path.display().to_string()));
     }
-    let book_name = epub_path
-        .with_extension("")
-        .file_name()
-        .expect("unreachable")
-        .to_string_lossy()
-        .to_string();
-    let output_dir = if with_file_name {
-        output_dir.join(&book_name)
-    } else {
-        output_dir.to_owned()
-    };
+    let mut output_dir = output_dir.as_ref().to_owned();
+    if with_file_name {
+        let book_name = epub_path
+            .with_extension("")
+            .file_name()
+            .expect("unreachable")
+            .to_string_lossy()
+            .to_string();
+        output_dir.push(book_name)
+    }
     fs::create_dir_all(output_dir.join("src"))?;
 
     let mut epub_doc = EpubDoc::new(epub_path)?;
-    let title = epub_doc
-        .metadata
-        .get("title")
-        .and_then(|v| v.first().cloned())
-        .unwrap_or(book_name);
-    let creator = epub_doc
-        .metadata
-        .get("creator")
-        .and_then(|v| v.first().cloned());
-    let (summary_md, html_to_md) = generate_summary_md(&epub_doc, &title);
+    let (summary_md, html_to_md) = generate_summary_md(&epub_doc);
     extract_chapters_and_resources(&mut epub_doc, &output_dir, &html_to_md)?;
     fs::write(output_dir.join("src/SUMMARY.md"), summary_md)?;
-    write_book_toml(&output_dir, &title, creator)?;
+    write_book_toml(&epub_doc, &output_dir)?;
     Ok(())
 }
 
@@ -82,7 +72,6 @@ fn epub_nav_to_md(
 /// # Arguments
 ///
 /// * `epub_doc` - The EPUB document
-/// * `title` - The title of the book
 ///
 /// # Returns
 ///
@@ -90,9 +79,13 @@ fn epub_nav_to_md(
 /// * `html_to_md` - The file mapping from html to md
 pub fn generate_summary_md<R: Read + Seek>(
     epub_doc: &EpubDoc<R>,
-    title: &str,
 ) -> (String, HashMap<PathBuf, PathBuf>) {
-    let mut summary_md = format!("# {}\n\n", title);
+    let title = epub_doc.metadata.get("title").and_then(|v| v.first());
+    let mut summary_md = if let Some(title) = title {
+        format!("# {}\n\n", title)
+    } else {
+        "".to_string()
+    };
     let html_to_md = epub_doc
         .resources
         .iter()
@@ -185,17 +178,35 @@ fn post_process_md(markdown: &str, file_name_map: &HashMap<&OsStr, &OsStr>) -> S
     .to_string()
 }
 
-fn write_book_toml(
+fn write_book_toml<R: Read + Seek>(
+    epub_doc: &EpubDoc<R>,
     output_dir: impl AsRef<Path>,
-    title: &str,
-    creator: Option<String>,
 ) -> io::Result<()> {
     let output_dir = output_dir.as_ref();
-    let author = match creator {
-        Some(creator) => format!("author = \"{creator}\"\n"),
-        None => "".to_string(),
+    let title = epub_doc
+        .metadata
+        .get("title")
+        .and_then(|v| v.first().cloned());
+    let authors = epub_doc.metadata.get("creator").cloned().unwrap_or(vec![]);
+    let description = epub_doc
+        .metadata
+        .get("description")
+        .and_then(|v| v.first().cloned())
+        .map(|s| htmd::convert(&s).expect("unreachable"));
+    let lang = epub_doc
+        .metadata
+        .get("lang")
+        .and_then(|v| v.first().cloned());
+    let config = BookConfig {
+        title,
+        authors,
+        description,
+        src: PathBuf::from("src"),
+        multilingual: false,
+        language: lang,
+        text_direction: None,
     };
-    let toml_content = format!("[book]\ntitle = \"{title}\"\n{author}",);
+    let toml_content = format!("[book]\n{}", toml::to_string(&config).expect("unreachable"));
     fs::write(output_dir.join("book.toml"), toml_content)?;
     Ok(())
 }
