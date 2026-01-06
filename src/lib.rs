@@ -2,7 +2,7 @@ pub mod error;
 
 use epub::doc::{EpubDoc, NavPoint};
 use error::Error;
-use mdbook::config::BookConfig;
+use mdbook_core::config::BookConfig;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -15,20 +15,21 @@ use std::{fs, io};
 ///
 /// # Arguments
 ///
-/// * `epub_path` - The path to the EPUB file
-/// * `output_dir` - The path to the output directory
-/// * `with_file_name` - Whether to use the file name as the output directory
+/// * `epub_path` - Path to the input EPUB file
+/// * `output_dir` - Path to the output directory
+/// * `create_subdir` - If `true`, creates a subdirectory named after the EPUB file
+///   (e.g., `output_dir/book_name/`). If `false`, outputs directly to `output_dir`.
 pub fn convert_epub_to_mdbook(
     epub_path: impl AsRef<Path>,
     output_dir: impl AsRef<Path>,
-    with_file_name: bool,
+    create_subdir: bool,
 ) -> Result<(), Error> {
     let epub_path = epub_path.as_ref();
     if !epub_path.is_file() {
         return Err(Error::NotAFile(epub_path.display().to_string()));
     }
     let mut output_dir = output_dir.as_ref().to_owned();
-    if with_file_name {
+    if create_subdir {
         let book_name = epub_path
             .with_extension("")
             .file_name()
@@ -80,7 +81,7 @@ fn epub_nav_to_md(
 pub fn generate_summary_md<R: Read + Seek>(
     epub_doc: &EpubDoc<R>,
 ) -> (String, HashMap<PathBuf, PathBuf>) {
-    let title = epub_doc.metadata.get("title").and_then(|v| v.first());
+    let title = epub_doc.get_title();
     let mut summary_md = if let Some(title) = title {
         format!("# {}\n\n", title)
     } else {
@@ -89,8 +90,10 @@ pub fn generate_summary_md<R: Read + Seek>(
     let html_to_md = epub_doc
         .resources
         .iter()
-        .filter(|(_, (_, mime))| ["application/xhtml+xml", "text/html"].contains(&&**mime))
-        .map(|(_, (path, _))| (path.clone(), path.with_extension("md")))
+        .filter(|(_, resource)| {
+            ["application/xhtml+xml", "text/html"].contains(&resource.mime.as_str())
+        })
+        .map(|(_, resource)| (resource.path.clone(), resource.path.with_extension("md")))
         .collect::<HashMap<PathBuf, PathBuf>>();
     for nav in &epub_doc.toc {
         if let Some(md) = epub_nav_to_md(nav, 0, &html_to_md) {
@@ -110,12 +113,13 @@ fn extract_chapters_and_resources<R: Read + Seek>(
         .filter_map(|(k, v)| Some((k.file_name()?, v.file_name()?)))
         .collect::<HashMap<_, _>>();
     let src_dir = output_dir.as_ref().join("src");
-    for (_, (path, _)) in epub_doc.resources.clone().into_iter() {
-        let mut content = match epub_doc.get_resource_by_path(&path) {
+    for (_, resource) in epub_doc.resources.clone() {
+        let path = &resource.path;
+        let mut content = match epub_doc.get_resource_by_path(path) {
             Some(content) => content,
             None => continue, // unreachable
         };
-        let target_path = if let Some(md_path) = html_to_md.get(&path) {
+        let target_path = if let Some(md_path) = html_to_md.get(path) {
             // html file, convert to md
             let html = String::from_utf8(content.clone())?;
             let markdown = htmd::convert(&html)?;
@@ -127,7 +131,7 @@ fn extract_chapters_and_resources<R: Read + Seek>(
             }
         } else {
             // other file, just copy
-            src_dir.join(&path)
+            src_dir.join(path)
         };
         // write to target path
         if let Some(parent) = target_path.parent() {
@@ -139,7 +143,7 @@ fn extract_chapters_and_resources<R: Read + Seek>(
 }
 
 /// Capture the `{link}` without `#`, eg:
-/// ```
+/// ```text
 /// [ABC]({abc.html}#xxx)
 /// [ABC]({abc.html})
 /// ```
@@ -147,7 +151,7 @@ static LINK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"\[[^\]]+\]\((?P<link>[^#)]+)(#[^)]+)?\)"#).expect("unreachable")
 });
 /// Match the URL link, eg:
-/// ```
+/// ```text
 /// https://www.example.com\
 /// ```
 static URL_LINK: LazyLock<Regex> =
@@ -183,29 +187,26 @@ fn write_book_toml<R: Read + Seek>(
     output_dir: impl AsRef<Path>,
 ) -> io::Result<()> {
     let output_dir = output_dir.as_ref();
-    let title = epub_doc
+    let title = epub_doc.get_title();
+    let authors = epub_doc
         .metadata
-        .get("title")
-        .and_then(|v| v.first().cloned());
-    let authors = epub_doc.metadata.get("creator").cloned().unwrap_or(vec![]);
+        .iter()
+        .filter(|m| m.property == "creator")
+        .map(|m| m.value.clone())
+        .collect::<Vec<_>>();
     let description = epub_doc
-        .metadata
-        .get("description")
-        .and_then(|v| v.first().cloned())
-        .map(|s| htmd::convert(&s).expect("unreachable"));
+        .mdata("description")
+        .map(|m| htmd::convert(&m.value).expect("unreachable"));
     let lang = epub_doc
-        .metadata
-        .get("lang")
-        .and_then(|v| v.first().cloned());
-    let config = BookConfig {
-        title,
-        authors,
-        description,
-        src: PathBuf::from("src"),
-        multilingual: false,
-        language: lang,
-        text_direction: None,
-    };
+        .mdata("language")
+        .or_else(|| epub_doc.mdata("lang"))
+        .map(|m| m.value.clone());
+    let mut config = BookConfig::default();
+    config.title = title;
+    config.authors = authors;
+    config.description = description;
+    config.src = PathBuf::from("src");
+    config.language = lang;
     let toml_content = format!("[book]\n{}", toml::to_string(&config).expect("unreachable"));
     fs::write(output_dir.join("book.toml"), toml_content)?;
     Ok(())
